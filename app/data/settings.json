@@ -1,0 +1,8 @@
+{
+  "provider": "Simulado",
+  "openrouter_key": "",
+  "groq_key": "",
+  "openrouter_model": "qwen/qwen3-coder",
+  "groq_model": "llama-3.3-70b-versatile",
+  "language": "es"
+}

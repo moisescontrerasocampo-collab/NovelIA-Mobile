@@ -1,0 +1,15 @@
+{
+  "step": 6,
+  "name": "NovelIA Kivy",
+  "features": [
+    "settings_ai",
+    "openrouter",
+    "groq",
+    "project_path_load",
+    "chapter_creation",
+    "character_creation",
+    "docx_read_write",
+    "rcg_basic",
+    "responsive_portrait_landscape_tablet"
+  ]
+}

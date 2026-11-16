@@ -1,15 +1,33 @@
 plugins { id 'com.android.application' }
 
+// No usar claves de depuración para publicar actualizaciones.
+// Los valores de firma provienen exclusivamente de secretos de GitHub Actions.
+def stableKeystorePath = System.getenv('CANTALOCAL_KEYSTORE_PATH')
+def stableStorePass = System.getenv('CANTALOCAL_STORE_PASSWORD')
+def stableKeyAlias = System.getenv('CANTALOCAL_KEY_ALIAS')
+def stableKeyPass = System.getenv('CANTALOCAL_KEY_PASSWORD')
+
 android {
     namespace 'cl.cantalocal.autonomo'
     compileSdk 35
     defaultConfig {
+        // Este ID debe mantenerse para que Android reconozca las actualizaciones.
         applicationId 'cl.cantalocal.autonomo'
         minSdk 28
         targetSdk 34
-        versionCode 9
-        versionName '0.7.0'
+        versionCode 10
+        versionName '0.8.0'
         ndk { abiFilters 'arm64-v8a' }
+    }
+    signingConfigs {
+        stableRelease {
+            if (stableKeystorePath) {
+                storeFile file(stableKeystorePath)
+                storePassword stableStorePass
+                keyAlias stableKeyAlias
+                keyPassword stableKeyPass
+            }
+        }
     }
     packaging {
         jniLibs {
@@ -18,8 +36,27 @@ android {
         }
     }
     buildTypes {
-        release { minifyEnabled false }
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.stableRelease
+        }
+        // Debug solo para desarrollo local: nunca se debe publicar como actualización.
         debug { minifyEnabled false }
     }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+}
+
+tasks.register('assertStableReleaseSigning') {
+    doLast {
+        if (!stableKeystorePath || !stableStorePass || !stableKeyAlias || !stableKeyPass) {
+            throw new GradleException('Falta la firma de publicación persistente. No se puede distribuir una APK debug.')
+        }
+        if (!file(stableKeystorePath).isFile()) {
+            throw new GradleException('No se encontró el almacén de claves privado para firmar la actualización.')
+        }
+    }
+}
+// Obligar a que la comprobación de firma ocurra antes de armar el paquete Release.
+tasks.matching { it.name == 'preReleaseBuild' }.configureEach {
+    dependsOn tasks.named('assertStableReleaseSigning')
 }

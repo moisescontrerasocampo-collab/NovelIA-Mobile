@@ -1,0 +1,47 @@
+name: CantaLocal - Android ARM64 autonomous
+on:
+  push:
+    branches:
+      - build-cantalocal-android-arm64
+    paths:
+      - "CantaLocal/**"
+      - ".github/workflows/build-cantalocal.yml"
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+      - name: Install Android NDK and build tools
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager --install "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+      - name: Build ACE-Step ARM64 and package APK
+        working-directory: CantaLocal
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.2.12479018"
+          bash scripts/build-engine.sh
+          gradle --no-daemon :app:assembleDebug --stacktrace
+      - name: Verify architecture and APK
+        working-directory: CantaLocal
+        run: |
+          APK="$(find app/build/outputs/apk/debug -name '*.apk' -print -quit)"
+          test -s "$APK"
+          unzip -l "$APK" | grep -F "lib/arm64-v8a/libace-server.so"
+          sha256sum "$APK"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CantaLocal-0.4.0-arm64
+          path: CantaLocal/app/build/outputs/apk/debug/*.apk
+          retention-days: 30

@@ -1,0 +1,45 @@
+name: CantaLocal - distribuir APK firmada con clave privada
+on:
+  push:
+    branches: [cantalocal-distribution-081]
+    paths:
+      - "CantaLocalDistribution/chunks/**"
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  publish-verified-signed-apk:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reunir APK firmada desde fragmentos públicos
+        run: |
+          set -euo pipefail
+          APK="CantaLocal_0.8.1_Actualizable.apk"
+          : > "$APK"
+          for file in CantaLocalDistribution/chunks/part-*.b64; do
+            base64 --decode "$file" >> "$APK"
+          done
+          printf '%s  %s\n' "ac09eef775bd86a87efab2dc71647402197601e02da5e64ec7e1b8d7ba837877" "$APK" | sha256sum -c -
+          unzip -t "$APK" | tail -1
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          "$APKSIGNER" verify --verbose --print-certs "$APK"
+          cert="$("$APKSIGNER" verify --print-certs "$APK" | sed -n 's/.*certificate SHA-256 digest: //p' | head -1 | tr -d '\r')"
+          test "$cert" = "f62a0ad426f1e3a0d97f9f7f5b3a8ebaebc60370d680f28c320bde8112e36a1a"
+          echo "APK y certificado privado persistente verificados correctamente."
+      - name: Publicar descarga directa en GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="cantalocal-v0.8.1-actualizable"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::Ya existe esta versión. No se sobrescribirá."
+            exit 1
+          fi
+          gh release create "$tag" CantaLocal_0.8.1_Actualizable.apk \
+            --repo "$GITHUB_REPOSITORY" \
+            --target cantalocal-distribution-081 \
+            --title "CantaLocal 0.8.1 - base de actualizaciones" \
+            --notes "Primera versión con firma privada permanente. SHA-256 del certificado de firma Android: f62a0ad426f1e3a0d97f9f7f5b3a8ebaebc60370d680f28c320bde8112e36a1a. APK con package cl.cantalocal.autonomo, versionCode 11, ACE-Step ARM64 integrado, interfaz en español y servicio de descarga. Futuras APK pueden reemplazar esta instalación sin borrar modelos si mantienen la misma firma y versionCode superior. Las versiones 0.6 y anteriores tenían firmas incompatibles. Generación musical aún no confirmada con canción final en HONOR Magic7 Lite." \
+            --prerelease

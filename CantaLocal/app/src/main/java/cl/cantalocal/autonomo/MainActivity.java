@@ -71,7 +71,7 @@ public class MainActivity extends Activity {
             setupButton.setEnabled(false);
             return;
         }
-        showStatus("CantaLocal está preparado", "Pulsa un único botón para descargar e instalar los modelos. Una vez preparados, podrás crear canciones sin internet.", 0);
+        showStatus("CantaLocal está preparado", "Pulsa el botón para iniciar. Ahora verás una confirmación inmediata, el estado de conexión y cada descarga.", 0);
         executor.execute(() -> {
             if (allTrusted()) {
                 showStatus("Modelos encontrados", "Arrancando la IA musical guardada...", 95);
@@ -140,28 +140,46 @@ public class MainActivity extends Activity {
             progress.setProgress(Math.min(100,Math.max(0,percent)));
         });
     }
-    private void setBusy(boolean active) {runOnUiThread(() -> setupButton.setEnabled(!active));}
+    private void setBusy(boolean active) {
+        runOnUiThread(() -> {
+            if (setupButton == null) return;
+            setupButton.setEnabled(!active);
+            setupButton.setText(active ? "Preparando IA musical…" : "Preparar IA musical");
+            setupButton.setAlpha(active ? 0.72f : 1.0f);
+        });
+    }
     private void showError(Exception e) {
-        showStatus("No se pudo completar", String.valueOf(e.getMessage()) + "\nPuedes pulsar el botón para reintentar; las descargas anteriores se conservan.", 0);
+        showStatus("No se pudo completar", (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()) + "\nPuedes pulsar el botón para reintentar; las descargas anteriores se conservan.", 0);
         setBusy(false);
         synchronized(lock){working=false;}
     }
     private void prepare() {
         synchronized(lock){if(working)return;working=true;}
+        showStatus("Preparando IA musical", "Botón recibido. Comprobando memoria y almacenamiento…", 1);
         setBusy(true);
         executor.execute(() -> {
             try {
+                showStatus("Comprobando espacio", "Revisando los archivos existentes y el almacenamiento del teléfono…", 1);
                 if(!modelDir.isDirectory() && !modelDir.mkdirs()) throw new Exception("No se pudo crear la carpeta de modelos.");
                 long required=550_000_000L;
                 for(int i=0;i<MODELS.length;i++){
                     if(!isTrusted(i))required+=(long)(Long.parseLong(MODELS[i][2])*1.19);
                 }
                 long free=new StatFs(modelDir.getAbsolutePath()).getAvailableBytes();
+                showStatus("Comprobando almacenamiento",
+                    String.format(Locale.ROOT, "Disponible: %.1f GB · Necesario: %.1f GB. Los modelos ya descargados se conservan.",
+                        free/1_000_000_000.0,required/1_000_000_000.0), 2);
                 if(free<required)throw new Exception("No hay suficiente almacenamiento libre. Necesitas unos "+(required/1_000_000_000L+1)+" GB adicionales.");
                 for(int i=0;i<MODELS.length;i++){
-                    if(isTrusted(i))continue;
+                    if(isTrusted(i)) {
+                        showStatus("Modelo " + (i+1) + " verificado", "Este modelo ya estaba descargado.", (i+1)*25);
+                        continue;
+                    }
+                    showStatus("Preparando descarga " + (i+1) + " de 4",
+                        "Conectando con Hugging Face para descargar " + MODELS[i][0], Math.max(2,i*25));
                     fetchModel(i);
                 }
+                showStatus("Modelos preparados", "Los cuatro modelos están verificados. Arrancando el motor local…", 97);
                 startEngine();
             } catch(Exception e) {showError(e);}
             finally {synchronized(lock){working=false;}}
@@ -194,12 +212,18 @@ public class MainActivity extends Activity {
             HttpURLConnection conn=null;
             try {
                 long offset=part.exists()?part.length():0;
+                showStatus("Conectando al modelo " + (i+1) + " de 4",
+                    "Intento " + (attempt+1) + " de 4 · " + filename +
+                    (offset>0 ? " · Reanudando desde " + (offset/1_000_000) + " MB" : " · Esperando respuesta del servidor"),
+                    Math.max(2,baseProgress));
                 URL url=new URL(BASE+filename+"?download=true");
                 conn=(HttpURLConnection)url.openConnection();
                 conn.setInstanceFollowRedirects(true);conn.setConnectTimeout(30000);conn.setReadTimeout(90000);
                 conn.setRequestProperty("User-Agent","CantaLocal/0.4");
                 if(offset>0)conn.setRequestProperty("Range","bytes="+offset+"-");
                 int code=conn.getResponseCode();
+                showStatus("Servidor respondió: HTTP " + code,
+                    "Iniciando transferencia del modelo " + (i+1) + " de 4 · " + filename, Math.max(2,baseProgress));
                 if(code==416){part.delete();continue;}
                 if(code!=200 && code!=206)throw new Exception("Error HTTP "+code+" al descargar "+filename);
                 boolean resume=code==206&&offset>0;
@@ -214,7 +238,7 @@ public class MainActivity extends Activity {
                     byte[] buf=new byte[128*1024];int n;
                     while((n=input.read(buf))!=-1){
                         output.write(buf,0,n);bytes+=n;
-                        if(bytes-last>5_000_000){
+                        if(bytes-last>500_000){
                             last=bytes;
                             int p=baseProgress+(total>0?(int)(24.0*bytes/total):0);
                             showStatus("Descargando modelo "+(i+1)+" de 4",
@@ -233,6 +257,9 @@ public class MainActivity extends Activity {
                 return;
             } catch(Exception e) {
                 if(attempt==3)throw e;
+                showStatus("Reintentando descarga " + (i+1) + " de 4",
+                    "Error: " + e.getClass().getSimpleName() + " · " + e.getMessage() +
+                    "\nReintentando automáticamente (" + (attempt+2) + "/4).", Math.max(2,baseProgress));
                 Thread.sleep(2500L*(attempt+1));
             } finally {if(conn!=null)conn.disconnect();}
         }

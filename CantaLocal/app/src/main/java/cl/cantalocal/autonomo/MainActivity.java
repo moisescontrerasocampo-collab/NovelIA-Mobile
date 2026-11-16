@@ -1,6 +1,13 @@
 package cl.cantalocal.autonomo;
 
 import android.app.Activity;
+import android.Manifest;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.os.Build;
+import android.os.PowerManager;
+import android.provider.Settings;
+import android.net.Uri;
 import android.app.DownloadManager;
 import android.database.Cursor;
 import android.net.Uri;
@@ -72,7 +79,7 @@ public class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle stateBundle) {
         super.onCreate(stateBundle);
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        // La pantalla puede apagarse mientras se descarga.
         File external = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
         modelDir = new File(external == null ? getFilesDir() : external, "CantaLocal");
         downloadManager = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
@@ -84,7 +91,7 @@ public class MainActivity extends Activity {
             setupButton.setEnabled(false);
             return;
         }
-        showStatus("CantaLocal está preparado", "Pulsa una vez para descargar los cuatro modelos. Android conservará las descargas incluso si cierras CantaLocal.", 0);
+        showStatus("CantaLocal está preparado", "Pulsa una vez para iniciar la descarga con notificación permanente. Puedes apagar la pantalla.", 0);
         executor.execute(() -> {
             if (allTrusted()) {
                 showStatus("Modelos encontrados", "Arrancando la IA musical guardada...", 95);
@@ -141,7 +148,7 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams bParam = new LinearLayout.LayoutParams(-1,dp(56));bParam.topMargin=dp(24);
         setupPage.addView(setupButton,bParam);
         setupButton.setOnClickListener(v -> prepare());
-        TextView info = label("Descarga persistente administrada por Android: puedes cerrar la aplicación, cambiar de pantalla o apagarla. Al volver, recuperarás el progreso guardado.\n\nSolo Wi-Fi para proteger tus datos móviles · Aproximadamente 3,3 GB · Sin Termux.\n\nPrueba inicial recomendada: 30 segundos, voz cantada en español.", 14, 0xffaba4be, false);
+        TextView info = label("Descarga con notificación fija de Android. Puedes salir de la app y apagar la pantalla. Cada fragmento se guarda para reanudar tras cortes de Wi-Fi.\n\nCuando Android lo solicite, permite las notificaciones y la actividad sin restricción de batería.\n\nAproximadamente 3,3 GB · Sin Termux.", 14, 0xffaba4be, false);
         LinearLayout.LayoutParams infoParam = new LinearLayout.LayoutParams(-1,-2); infoParam.topMargin=dp(27);
         outer.addView(info,infoParam);
         setContentView(scroll);
@@ -166,186 +173,92 @@ public class MainActivity extends Activity {
         setBusy(false);
         synchronized(lock){working=false;}
     }
-    // Encola las cuatro transferencias en el servicio de descargas de Android.
-    // Este servicio sobrevive al cierre de CantaLocal y a un reinicio del teléfono.
+    private static final int REQUEST_NOTIFICATIONS = 1402;
     private void prepare() {
-        showStatus("Iniciando descargas persistentes", "Android guardará el progreso y las descargas seguirán en segundo plano con Wi-Fi.", 1);
-        setBusy(true);
-        executor.execute(() -> {
-            try {
-                if (getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) == null)
-                    throw new Exception("El almacenamiento externo de la aplicación no está disponible.");
-                if (!modelDir.isDirectory() && !modelDir.mkdirs())
-                    throw new Exception("No se pudo crear la carpeta persistente de modelos.");
-                long expected = 500_000_000L;
-                for (int i=0; i<MODELS.length; i++) {
-                    if (!isTrusted(i) && downloadStatus(i) != DownloadManager.STATUS_SUCCESSFUL)
-                        expected += Long.parseLong(MODELS[i][2]);
-                }
-                long free = new StatFs(modelDir.getAbsolutePath()).getAvailableBytes();
-                if (free < expected) throw new Exception(String.format(Locale.ROOT,
-                    "Espacio insuficiente: %.1f GB libres, necesitas al menos %.1f GB para completar las descargas.",
-                    free/1e9, expected/1e9));
-                for (int i=0; i<MODELS.length; i++) {
-                    if (isTrusted(i)) continue;
-                    long existingId = downloadId(i);
-                    int status = downloadStatus(i);
-                    if (existingId > 0 && status != -1 && status != DownloadManager.STATUS_FAILED) continue;
-                    if (existingId > 0) downloadManager.remove(existingId);
-                    File target = model(i);
-                    if (target.exists() && !target.delete())
-                        throw new Exception("No se puede eliminar una descarga dañada: " + target.getName());
-                    DownloadManager.Request request = new DownloadManager.Request(Uri.parse(BASE + MODELS[i][0] + "?download=true"));
-                    request.setTitle("CantaLocal · modelo " + (i+1) + " de 4");
-                    request.setDescription("IA musical sin conexión · se conserva el progreso");
-                    request.setMimeType("application/octet-stream");
-                    request.setAllowedOverMetered(false);
-                    request.setAllowedOverRoaming(false);
-                    request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE);
-                    request.setDestinationInExternalFilesDir(this, Environment.DIRECTORY_DOWNLOADS, "CantaLocal/" + MODELS[i][0]);
-                    long id = downloadManager.enqueue(request);
-                    if (!prefs.edit().putLong("download-id-" + MODELS[i][0], id).commit())
-                        throw new Exception("No se pudo guardar el identificador de descarga del modelo "+(i+1));
-                }
-                showStatus("Descargas activadas", "Puedes salir de CantaLocal. Android continuará automáticamente por Wi-Fi y mostrará el progreso en sus notificaciones.", 2);
-            } catch (Exception e) {
-                showError(e);
-            } finally {
-                setBusy(false);
-            }
-        });
-    }
-
-    private long downloadId(int i) {
-        return prefs.getLong("download-id-" + MODELS[i][0], -1L);
-    }
-
-    private int downloadStatus(int i) {
-        long id = downloadId(i);
-        if (id < 0) return -1;
-        try (Cursor c = downloadManager.query(new DownloadManager.Query().setFilterById(id))) {
-            if (c == null || !c.moveToFirst()) return -1;
-            return c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
-        } catch (Exception e) { return -1; }
-    }
-
-    private String pausedReason(int reason) {
-        if (reason == DownloadManager.PAUSED_WAITING_FOR_NETWORK || reason == DownloadManager.PAUSED_QUEUED_FOR_WIFI)
-            return "Esperando Wi-Fi; se reanudará automáticamente";
-        if (reason == DownloadManager.PAUSED_WAITING_TO_RETRY)
-            return "Conexión inestable; Android intentará continuar automáticamente";
-        return "Descarga temporalmente en pausa";
-    }
-
-    // Relee siempre las cifras desde la base de datos del sistema, no desde
-    // variables de memoria que desaparecen al cerrar la actividad.
-    private void refreshDownloads() {
-        if (web != null || downloadManager == null || modelDir == null) return;
-        long received=0, total=0;
-        int known=0, complete=0, failed=0;
-        String current="", wait="";
-        boolean everySuccess=true;
-        for (int i=0; i<MODELS.length; i++) {
-            long fallback = Long.parseLong(MODELS[i][2]);
-            if (isTrusted(i)) {
-                received+=model(i).length();
-                total+=model(i).length();
-                complete++;
-                continue;
-            }
-            long id=downloadId(i);
-            if (id<0) { everySuccess=false; total+=fallback; continue; }
-            known++;
-            try (Cursor c=downloadManager.query(new DownloadManager.Query().setFilterById(id))) {
-                if (c==null || !c.moveToFirst()) {
-                    everySuccess=false;failed++;total+=fallback;current="Se perdió el registro de una descarga";
-                    continue;
-                }
-                int status=c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
-                int reason=c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON));
-                long bytes=Math.max(0,c.getLong(c.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR)));
-                long size=c.getLong(c.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES));
-                if(size<=0)size=fallback;
-                total+=size;received+=Math.min(bytes,size);
-                if (status==DownloadManager.STATUS_SUCCESSFUL) {
-                    complete++;
-                    received += Math.max(0,size-Math.min(bytes,size));
-                } else {
-                    everySuccess=false;
-                    if(status==DownloadManager.STATUS_FAILED) {
-                        failed++;
-                        current="Error en modelo " + (i+1) + " (código Android " + reason + ")";
-                    } else if(status==DownloadManager.STATUS_PAUSED) {
-                        wait=pausedReason(reason);
-                        current="Modelo " + (i+1) + "/4 · " + (bytes/1_000_000) + " / " + (size/1_000_000) + " MB";
-                    } else if(status==DownloadManager.STATUS_RUNNING) {
-                        current="Modelo " + (i+1) + "/4 · " + (bytes/1_000_000) + " / " + (size/1_000_000) + " MB";
-                    } else if(current.isEmpty()) {
-                        current="Modelo " + (i+1) + "/4 en cola de descargas";
-                    }
-                }
-            } catch (Exception e) {
-                everySuccess=false;
-                failed++;
-                current="No se pudo consultar Android: "+e.getMessage();
-                total+=fallback;
-            }
-        }
-        if (known==0 && complete==0) return;
-        int percentage=(int)(100.0*received/Math.max(1,total));
-        if (complete==4) {
-            showStatus("Modelos descargados", "Verificando los archivos para iniciar la IA…", 98);
-            if (!verifying && !launching) verifyAndOpen();
+        if (Build.VERSION.SDK_INT >= 33 &&
+             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},REQUEST_NOTIFICATIONS);
             return;
         }
-        if (failed>0) {
-            showStatus("Requiere reintento", current+"\nPulsa «Preparar IA musical» para volver a descargar solo el modelo que falló; los demás se conservan.", percentage);
-        } else {
-            String title=wait.isEmpty()?"Descargando con Android":"Descarga en pausa automática";
-            String detail=String.format(Locale.ROOT,
-                "%.0f MB guardados · %d de 4 modelos finalizados\n%s%s\nPuedes cerrar CantaLocal; Android conserva las descargas.",
-                received/1e6, complete, current, wait.isEmpty()?"":"\n"+wait);
-            showStatus(title, detail, Math.min(97,percentage));
+        startBackgroundDownloads();
+    }
+    @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] grants) {
+        super.onRequestPermissionsResult(requestCode,permissions,grants);
+        if(requestCode==REQUEST_NOTIFICATIONS)startBackgroundDownloads();
+    }
+    private void startBackgroundDownloads() {
+        // Cancelar DownloadManager anterior para impedir escrituras simultáneas.
+        if(!prefs.getBoolean("downloadmanager-migrated-v06",false)){
+            for(int i=0;i<MODELS.length;i++){
+                long id=prefs.getLong("download-id-"+MODELS[i][0],-1L);
+                if(id>0)try{downloadManager.remove(id);}catch(Exception ignored){}
+            }
+            prefs.edit().putBoolean("downloadmanager-migrated-v06",true).commit();
+        }
+        showStatus("Descarga en segundo plano","Iniciando la notificación permanente. Puedes apagar la pantalla…",1);
+        try {
+            Intent job=new Intent(this,ModelDownloadService.class).setAction(ModelDownloadService.ACTION_START);
+            if(Build.VERSION.SDK_INT>=26)startForegroundService(job);else startService(job);
+        }catch(Exception e){
+            showStatus("No se pudo iniciar la descarga",String.valueOf(e.getMessage()),0);
+            return;
+        }
+        // MagicOS puede impedir descargas prolongadas; Android pide autorización una sola vez.
+        PowerManager pm=(PowerManager)getSystemService(POWER_SERVICE);
+        if(pm!=null && Build.VERSION.SDK_INT>=23 && !pm.isIgnoringBatteryOptimizations(getPackageName())
+            && !prefs.getBoolean("requested-battery-exemption",false)) {
+            prefs.edit().putBoolean("requested-battery-exemption",true).apply();
+            try{
+                Intent request=new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:"+getPackageName()));
+                startActivity(request);
+            }catch(Exception ignored){}
         }
     }
-
-    private void verifyAndOpen() {
-        synchronized(lock) {
-            if(verifying || launching || web!=null)return;
-            verifying=true;
+    private void refreshDownloads() {
+        if(web!=null || prefs==null || modelDir==null)return;
+        if(allTrusted()){
+            showStatus("Modelos verificados","Preparando el estudio musical…",100);
+            if(!verifying && !launching)verifyAndOpen();
+            return;
         }
-        executor.execute(() -> {
+        String st=prefs.getString("dl-state","");
+        String msg=prefs.getString("dl-message","");
+        int pct=prefs.getInt("dl-progress",0);
+        if(st.isEmpty()&&pct==0)return;
+        if("descargando".equals(st)||"iniciando".equals(st)) {
+            showStatus("Descargando en segundo plano",msg+"\nPuedes bloquear la pantalla. Revisa la notificación de CantaLocal.",pct);
+            setupButton.setText("Comprobar / continuar");
+        }else if("pausado".equals(st)){
+            showStatus("Descarga pausada",msg+"\nPulsa para reanudar los archivos parciales.",pct);
+            setupButton.setText("Reanudar descarga");
+        }else if("error".equals(st)){
+            showStatus("Descarga interrumpida",msg+"\nPulsa para continuar con lo que ya se guardó.",pct);
+            setupButton.setText("Reintentar descarga");
+        }else if("completado".equals(st)){
+            showStatus("Modelos descargados","Comprobando archivos para iniciar el estudio…",100);
+            if(!verifying && !launching)verifyAndOpen();
+        }else{
+            showStatus("Preparando IA musical",msg,pct);
+        }
+    }
+    private void verifyAndOpen() {
+        synchronized(lock){if(verifying||launching||web!=null)return;verifying=true;}
+        executor.execute(()->{
             try {
-                for(int i=0;i<MODELS.length;i++){
-                    if(isTrusted(i))continue;
-                    if(downloadStatus(i)!=DownloadManager.STATUS_SUCCESSFUL)
-                        throw new Exception("El modelo "+(i+1)+" todavía no termina de descargarse.");
-                    File f=model(i);
-                    if(!f.isFile() || f.length()<Long.parseLong(MODELS[i][2]))
-                        throw new Exception("El modelo "+(i+1)+" quedó incompleto.");
-                    showStatus("Verificando modelo "+(i+1)+"/4", "Revisando integridad SHA-256 de "+f.getName(), 98);
-                    if(!sha256(f).equalsIgnoreCase(MODELS[i][1])) {
-                        long id=downloadId(i);
-                        if(id>0)downloadManager.remove(id);
-                        prefs.edit().remove("download-id-"+MODELS[i][0]).remove(MODELS[i][0]).commit();
-                        f.delete();
-                        throw new Exception("El modelo "+(i+1)+" no pasó la comprobación SHA-256; pulsa Preparar para reintentarlo.");
-                    }
-                    prefs.edit().putString(MODELS[i][0], signature(f,i)).commit();
-                }
+                if(!allTrusted())throw new Exception("Todavía falta verificar un modelo");
                 synchronized(lock){launching=true;}
                 startEngine();
-            } catch(Exception e){ showError(e); }
-            finally { synchronized(lock){verifying=false;launching=false;} }
+            }catch(Exception e){showError(e);}
+            finally{synchronized(lock){verifying=false;launching=false;}}
         });
     }
-
-    @Override protected void onResume() {
+    @Override protected void onResume(){
         super.onResume();
         statusHandler.removeCallbacks(statusTick);
         statusHandler.post(statusTick);
     }
-    @Override protected void onPause() {
+    @Override protected void onPause(){
         statusHandler.removeCallbacks(statusTick);
         super.onPause();
     }

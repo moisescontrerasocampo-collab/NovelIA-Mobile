@@ -168,6 +168,7 @@ public class MainActivity extends Activity {
         });
     }
 
+    private boolean allTrusted() { for(int i=0;i<MODELS.length;i++)if(!isTrusted(i))return false;return true; }
     private File model(int i){return new File(modelDir,MODELS[i][0]);}
     private String signature(File f, int i) {return f.length()+":"+f.lastModified()+":"+MODELS[i][1];}
     private boolean isTrusted(int i) {

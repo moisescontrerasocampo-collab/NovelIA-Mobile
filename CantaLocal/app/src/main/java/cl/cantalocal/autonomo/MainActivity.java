@@ -320,21 +320,12 @@ public class MainActivity extends Activity {
         runOnUiThread(() -> openStudio());
     }
     private void openStudio() {
-        if(web!=null)return;
-        web=new WebView(this);
-        web.getSettings().setJavaScriptEnabled(true);
-        web.getSettings().setDomStorageEnabled(true);
-        web.getSettings().setAllowFileAccess(false);
-        web.getSettings().setAllowContentAccess(false);
-        web.setWebChromeClient(new WebChromeClient());
-        web.setWebViewClient(new WebViewClient() {
-            @Override public boolean shouldOverrideUrlLoading(WebView v, android.webkit.WebResourceRequest r) {
-                String s=r.getUrl().toString();
-                return !s.startsWith(HOST+"/");
-            }
-        });
-        setContentView(web);
-        web.loadUrl(HOST+"/");
+        // Experiencia simple en español: no abrir el panel técnico de acestep.cpp.
+        if (isFinishing()) return;
+        startActivity(new android.content.Intent(this, StudioActivity.class));
+        showStatus("Estudio musical abierto", "Al regresar puedes volver a entrar al estudio.",100);
+        setupButton.setText("Abrir estudio musical");
+        setupButton.setOnClickListener(v -> openStudio());
     }
     @Override public void onBackPressed() {
         if(web!=null&&web.canGoBack())web.goBack();

@@ -38,9 +38,24 @@ prueba de rotación de claves sin la clave privada anterior.
 
 `CANTALOCAL_SIGNER_SHA256`: huella pública SHA-256 exacta del certificado.
 
-Estos secretos todavía deben ser configurados por la persona autorizada a
-administrar el repositorio; no están presentes en el código. **Hasta
-entonces, no se debe distribuir ni llamar compatible a una nueva APK.**
+Las credenciales todavía no están configuradas como secretos en GitHub Actions.
+Sin embargo, **ya se creó una firma privada permanente fuera de GitHub** y se guardó
+exclusivamente en la Biblioteca privada de este usuario, carpeta `/CantaLocal/Privado/`.
+Las versiones de distribución se firman localmente con la clave `cantalocal-release.jks`
+y `secret.env` recuperados de esa ubicación, sin publicarlos en el repositorio.
+El sistema de CI evita publicar una compilación debug con otra firma.
+
+**Huella del certificado permanente:**
+`f62a0ad426f1e3a0d97f9f7f5b3a8ebaebc60370d680f28c320bde8112e36a1a`
+
+**APK entregada como base:** `CantaLocal_0.8.1_Actualizable.apk`, versiónCode 11,
+package `cl.cantalocal.autonomo`. El APK 0.8.0/versionCode10 de prueba también
+se firmó con esa misma huella SHA-256. Ambos se verificaron mediante `apksigner`.
+
+**Para la próxima versión**: recuperar los dos archivos privados de Biblioteca,
+incrementar `versionCode` (mínimo 12), compilar y firmar con esa misma clave.
+Verificar la huella antes de publicar. Nunca generar otra clave.
+No copiar credenciales a workflows públicos ni al código fuente.
 
 ## Restricción de migración desde 0.6
 

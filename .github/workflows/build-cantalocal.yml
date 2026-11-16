@@ -7,41 +7,71 @@ on:
       - "CantaLocal/**"
       - ".github/workflows/build-cantalocal.yml"
   workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
 jobs:
   build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
-      - name: Install Android NDK and build tools
+      - name: Obtain previously verified ACE-Step native engine
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/cmdline-tools/16.0/bin:$PATH"
-          yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager --install "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
-          sudo apt-get update
-          sudo apt-get install -y ninja-build
+          set -euo pipefail
+          mkdir -p /tmp/cantalocal-engine-artifact
+          gh run download 43897619529 --repo "$GITHUB_REPOSITORY" --name CantaLocal-0.4.0-arm64 --dir /tmp/cantalocal-engine-artifact
+          ENGINE_APK="$(find /tmp/cantalocal-engine-artifact -name '*.apk' -print -quit)"
+          test -s "$ENGINE_APK"
+          printf '%s  %s\n' "2fd1d95965bd6a06d9302a7f64744a87446119da084fed0dcddf70c0ca44840c" "$ENGINE_APK" | sha256sum -c -
+          mkdir -p CantaLocal/app/src/main/jniLibs/arm64-v8a
+          unzip -jo "$ENGINE_APK" 'lib/arm64-v8a/*.so' -d CantaLocal/app/src/main/jniLibs/arm64-v8a
+          test -s CantaLocal/app/src/main/jniLibs/arm64-v8a/libace-server.so
+          test -s CantaLocal/app/src/main/jniLibs/arm64-v8a/libggml-base.so
+          test -s CantaLocal/app/src/main/jniLibs/arm64-v8a/libggml-cpu.so
+          test -s CantaLocal/app/src/main/jniLibs/arm64-v8a/libggml.so
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.10.2"
-      - name: Build ACE-Step ARM64 and package APK
+      - name: Build corrected Android APK
+        working-directory: CantaLocal
+        run: gradle --no-daemon :app:assembleDebug --stacktrace
+      - name: Verify APK and embedded motor
+        id: verify
         working-directory: CantaLocal
         run: |
-          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.2.12479018"
-          bash scripts/build-engine.sh
-          gradle --no-daemon :app:assembleDebug --stacktrace
-      - name: Verify architecture and APK
-        working-directory: CantaLocal
-        run: |
+          set -euo pipefail
           APK="$(find app/build/outputs/apk/debug -name '*.apk' -print -quit)"
           test -s "$APK"
+          unzip -t "$APK" | tail -1
           unzip -l "$APK" | grep -F "lib/arm64-v8a/libace-server.so"
           sha256sum "$APK"
+          cp "$APK" "$RUNNER_TEMP/CantaLocal-0.4.1-arm64.apk"
       - uses: actions/upload-artifact@v4
         with:
-          name: CantaLocal-0.4.0-arm64
+          name: CantaLocal-0.4.1-arm64
           path: CantaLocal/app/build/outputs/apk/debug/*.apk
           retention-days: 30
+      - name: Publish public direct APK download
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cp "$RUNNER_TEMP/CantaLocal-0.4.1-arm64.apk" "./CantaLocal-0.4.1-arm64.apk"
+          SHA="$(sha256sum CantaLocal-0.4.1-arm64.apk | awk '{print $1}')"
+          if gh release view cantalocal-v0.4.1 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload cantalocal-v0.4.1 CantaLocal-0.4.1-arm64.apk --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create cantalocal-v0.4.1 CantaLocal-0.4.1-arm64.apk \
+              --repo "$GITHUB_REPOSITORY" \
+              --target build-cantalocal-android-arm64 \
+              --title "CantaLocal 0.4.1 - botón de preparación corregido" \
+              --notes "Mejoras: confirmación inmediata al pulsar Preparar IA musical; muestra estado de almacenamiento, conexión, descarga y reintentos con mensajes claros. Incluye el motor ACE-Step ARM64 compilado y reutilizado con verificación SHA-256 del paquete. Aplicación independiente de la versión 0.4 para evitar conflictos de firmas. No requiere Termux. Pendiente verificar la generación en HONOR Magic7 Lite. SHA-256: $SHA" \
+              --prerelease
+          fi

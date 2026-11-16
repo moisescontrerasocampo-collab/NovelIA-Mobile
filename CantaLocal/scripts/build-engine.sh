@@ -30,11 +30,24 @@ READELF="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
 "$READELF" -h "$BIN" | grep -E "Machine:.*AArch64"
 "$READELF" -h "$BIN" | grep -E "Type:.*DYN"
 "$READELF" -d "$BIN" | grep NEEDED || true
-if "$READELF" -d "$BIN" | grep -E 'NEEDED.*(libggml|libomp|libc\+\+_shared)'; then
-  echo 'Error: falta enlazado estático de bibliotecas del motor' >&2
-  exit 1
-fi
+# GGML se genera como librerías compartidas, incluso con BUILD_SHARED_LIBS=OFF.
+# Debemos incluirlas en la APK junto al ejecutable, y no hacer una
+# declaración errónea de que el binario está enlazado 100% estáticamente.
 cp "$BIN" "$OUT/libace-server.so"
-chmod 755 "$OUT/libace-server.so"
+for lib in "$BUILD"/build-android/libggml*.so; do
+  test -f "$lib" || continue
+  cp "$lib" "$OUT/"
+done
+if "$READELF" -d "$BIN" | grep -q 'libc++_shared.so'; then
+  cp "$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" "$OUT/"
+fi
+if "$READELF" -d "$BIN" | grep -E 'NEEDED.*libomp.so'; then
+  echo "No se admite libomp sin empaquetar" >&2; exit 1
+fi
+for needed in $("$READELF" -d "$BIN" | sed -n 's/.*Shared library: \[\(libggml[^]]*\.so\)\].*/\1/p'); do
+  test -s "$OUT/$needed" || { echo "Falta biblioteca $needed" >&2;exit 1; }
+done
+echo "Bibliotecas incluidas:"
+find "$OUT" -maxdepth 1 -type f -name '*.so' -printf '%f %s bytes\n'
 echo "Motor ARM64 creado:"
 du -h "$OUT/libace-server.so"

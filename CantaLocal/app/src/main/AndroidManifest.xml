@@ -16,6 +16,7 @@
           <category android:name="android.intent.category.LAUNCHER"/>
         </intent-filter>
       </activity>
+      <activity android:name=".StudioActivity" android:exported="false" android:windowSoftInputMode="adjustResize"/>
       <service android:name=".ModelDownloadService" android:enabled="true" android:exported="false" android:foregroundServiceType="dataSync" android:stopWithTask="false"/>
     </application>
 </manifest>

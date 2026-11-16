@@ -76,6 +76,7 @@ public class MainActivity extends Activity {
     private final Runnable statusTick = new Runnable() { @Override public void run() { refreshDownloads(); statusHandler.postDelayed(this, 2000); } };
     private volatile boolean verifying = false;
     private volatile boolean launching = false;
+    private volatile boolean studioShown = false;
 
     @Override public void onCreate(Bundle stateBundle) {
         super.onCreate(stateBundle);
@@ -92,12 +93,10 @@ public class MainActivity extends Activity {
             return;
         }
         showStatus("CantaLocal está preparado", "Pulsa una vez para iniciar la descarga con notificación permanente. Puedes apagar la pantalla.", 0);
-        executor.execute(() -> {
-            if (allTrusted()) {
-                showStatus("Modelos encontrados", "Arrancando la IA musical guardada...", 95);
-                try { startEngine(); } catch (Exception e) { showError(e); }
-            }
-        });
+        if (allTrusted()) {
+            showStatus("Modelos encontrados", "Abriendo el estudio sencillo en español…",95);
+            verifyAndOpen();
+        }
     }
 
     private int dp(int n) { return (int) (n * getResources().getDisplayMetrics().density + .5f); }
@@ -218,8 +217,14 @@ public class MainActivity extends Activity {
     private void refreshDownloads() {
         if(web!=null || prefs==null || modelDir==null)return;
         if(allTrusted()){
-            showStatus("Modelos verificados","Preparando el estudio musical…",100);
-            if(!verifying && !launching)verifyAndOpen();
+            if(studioShown) {
+                showStatus("Estudio musical listo","Abre el estudio para escribir tus letras y generar canciones.",100);
+                setupButton.setText("Abrir estudio musical");
+                setupButton.setOnClickListener(v -> openStudio());
+            } else {
+                showStatus("Modelos verificados","Preparando el estudio en español…",100);
+                if(!verifying && !launching)verifyAndOpen();
+            }
             return;
         }
         String st=prefs.getString("dl-state","");
@@ -322,6 +327,7 @@ public class MainActivity extends Activity {
     private void openStudio() {
         // Experiencia simple en español: no abrir el panel técnico de acestep.cpp.
         if (isFinishing()) return;
+        studioShown = true;
         startActivity(new android.content.Intent(this, StudioActivity.class));
         showStatus("Estudio musical abierto", "Al regresar puedes volver a entrar al estudio.",100);
         setupButton.setText("Abrir estudio musical");
